@@ -1,3 +1,21 @@
+# Coding Agent Rules
+
+## /pre-merge-review invocation
+
+When a user triggers `/pre-merge-review` (via `@copilot /pre-merge-review` comment):
+
+1. Invoke the `pre-merge-review` agent and let it complete fully.
+2. The agent will post its own PR comment via `github/add-pr-comment`. That is the final deliverable.
+3. **Do NOT reformat, summarize, or simplify** the agent's output. Do NOT post your own version.
+4. **Do NOT edit any files** in the repository.
+5. **Do NOT commit or push** anything.
+6. **Do NOT create branches.**
+7. **STOP immediately** after the agent finishes. Do not continue with "improvements" or "fixes."
+
+The pre-merge-review agent is READ-ONLY. Its findings are observations for humans. They are NOT tasks for you to implement.
+
+---
+
 # Code Review Agent Instructions (EARTH Stage 1)
 
 > For **copilot-pull-request-reviewer** - the automated shallow review bot.
