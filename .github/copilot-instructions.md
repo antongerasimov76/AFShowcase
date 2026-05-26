@@ -98,3 +98,14 @@ The pre-merge-review agent is READ-ONLY. Its findings are observations for human
 - No token limit checks before API calls
 - Missing retry logic for transient failures
 - Hardcoded model names (should be configurable)
+
+## Stage 1 Output Scope
+
+Stage 1 is a **shallow review only**. It feeds findings into Stage 2 (pre-merge-review agent) which makes the final merge decision.
+
+**DO NOT include** in Stage 1 output:
+- `## Merge Readiness` section — this belongs to Stage 2 only
+- Any merge/block/approve verdict
+- Risk scores
+
+Stage 1 MUST end after the `## Checklist` section. No merge decision.
