@@ -38,7 +38,7 @@ Your job is to analyze changes in the current PR and produce a structured review
 ## Your Workflow
 
 1. Call `github/get-pr` to get PR metadata (title, branch, base, body).
-2. Extract the Jira ticket ID (pattern `ROLF-\d+` or similar) from PR title, body, or branch name.
+2. Extract the Jira ticket ID (pattern `[A-Z]+-\d+`, e.g. `ROLF-123`, `AAPD-440`) from PR title, body, or branch name.
    - Call `mcp-atlassian/jira_get_issue` with `issue_key` to fetch summary, description, acceptance criteria (`customfield_10521`), status.
    - If no ticket found: mark AC verification as SKIPPED in the output.
 3. Call `github/list-files` to get all changed files with their patches (diffs).
