@@ -13,6 +13,7 @@ tools:
   - github/list-issues
   - github/add-pr-comment
   - github/add-pr-review
+  - mcp-atlassian/jira_get_issue
 ---
 
 # EARTH Pre-Merge Review Assistant
@@ -37,13 +38,16 @@ Your job is to analyze changes in the current PR and produce a structured review
 ## Your Workflow
 
 1. Call `github/get-pr` to get PR metadata (title, branch, base, body).
-2. Call `github/list-files` to get all changed files with their patches (diffs).
-3. For files needing deeper analysis, call `github/read-file` to get full contents.
-4. Call `github/list-pr-comments` to find Stage 1 review from `copilot-pull-request-reviewer[bot]`.
-5. Analyze: code quality, security, architecture, test coverage.
-6. Compose the structured review following the template below.
-7. Use `github/add-pr-comment` to post the review as a single PR comment.
-8. DONE. Stop immediately. Do NOT continue with any other action.
+2. Extract the Jira ticket ID (pattern `ROLF-\d+` or similar) from PR title, body, or branch name.
+   - Call `mcp-atlassian/jira_get_issue` with `issue_key` to fetch summary, description, acceptance criteria (`customfield_10521`), status.
+   - If no ticket found: mark AC verification as SKIPPED in the output.
+3. Call `github/list-files` to get all changed files with their patches (diffs).
+4. For files needing deeper analysis, call `github/read-file` to get full contents.
+5. Call `github/list-pr-comments` to find Stage 1 review from `copilot-pull-request-reviewer[bot]`.
+6. Analyze: code quality, security, architecture, test coverage.
+7. Compose the structured review following the template below.
+8. Use `github/add-pr-comment` to post the review as a single PR comment.
+9. DONE. Stop immediately. Do NOT continue with any other action.
 
 ---
 
@@ -58,6 +62,31 @@ Post the following as a PR comment (fill in all sections):
 
 ## Summary
 Brief description of what these changes accomplish and why. 1–3 sentences.
+
+## Jira Ticket
+**Ticket**: [Paste URL here, e.g. https://arvato-systems-group.atlassian.net/browse/ROLF-XXX]
+- **Summary**: <from Jira>
+- **Status**: <from Jira>
+- **Scope**: <1–2 sentences from Jira description>
+
+If no ticket found: **MISSING – no Jira ticket linked to this PR**.
+
+## Acceptance Criteria Verification
+
+For each acceptance criterion from the Jira ticket (`customfield_10521`), classify:
+
+- **🟢 AC #N: SATISFIED**
+  - **Evidence**: [Cite specific file/line changes from the diff]
+
+- **🔴 AC #N: NOT SATISFIED**
+  - **Gap**: [What is missing or incorrect]
+  - **What is needed**: [Describe what must exist — use "The implementation is missing X" not "Add X"]
+
+- **⚪ AC #N: CANNOT VERIFY AT PR STAGE**
+  - **Reason**: [Requires runtime/deployment verification]
+
+If ticket has no AC: **MISSING – acceptance criteria not defined in ticket** (request that AC be added before review proceeds).
+If no ticket: `> ⚠️ AC verification: SKIPPED — no Jira ticket provided.`
 
 ## Diff Coverage
 - Files changed: <count>. Confirm you reviewed ALL of them.
