@@ -3,6 +3,7 @@ import requests
 import azure.functions as func
 import json
 from datetime import datetime
+from shared_code.config import OPENAI_API_KEY, OPENAI_ENDPOINT
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -24,16 +25,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Data ready')
 
     if email:
-        GPT4V_KEY = "05287303f01b406582788526baca76c3"
-        GPT4V_ENDPOINT = "https://m9ai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"
-
-        # Исправленный endpoint для GPT-5-nano (chat/completions)
-        GPT5NANO_ENDPOINT = "https://paphos-eus2.openai.azure.com/openai/deployments/gpt-5-nano/chat/completions?api-version=2025-01-01-preview"
-        GPT5NANO_KEY = "1CgfeI6A9QsByYMPMEwFWChmEDGoIiIVPWYquWH0LjbGPkJbwppJJQQJ99BCACHYHv6XJ3w3AAABACOGJFxT"
-        
         headers = {
             "Content-Type": "application/json",
-            "api-key": GPT5NANO_KEY,
+            "api-key": OPENAI_API_KEY,
         }
 
         payload = {
@@ -77,7 +71,7 @@ Otherwise: { "action": "Other" }
 
         logging.info('Payload ready')
 
-        response = requests.post(GPT5NANO_ENDPOINT, headers=headers, json=payload)
+        response = requests.post(OPENAI_ENDPOINT, headers=headers, json=payload)
         response_json = response.json()
 
         # Extract the content from the response

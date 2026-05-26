@@ -6,6 +6,7 @@ import azure.functions as func
 import json
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from datetime import datetime
+from shared_code.config import OPENAI_API_KEY, OPENAI_ENDPOINT, BLOB_CONNECTION_STRING_PRIMARY, BLOB_CONNECTION_STRING_SECONDARY
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     start_time = datetime.now()
@@ -24,18 +25,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     account_name = req_body.get('ABS Account Name')
 
     if task:
-        GPT4V_KEY = "1CgfeI6A9QsByYMPMEwFWChmEDGoIiIVPWYquWH0LjbGPkJbwppJJQQJ99BCACHYHv6XJ3w3AAABACOGJFxT"
-        GPT4V_ENDPOINT = "https://paphos-eus2.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview"
-        
         headers = {
             "Content-Type": "application/json",
-            "api-key": GPT4V_KEY,
+            "api-key": OPENAI_API_KEY,
         }
 
         if account_name == "getaianswerb0488d":
-            connection_string = "DefaultEndpointsProtocol=https;AccountName=getaianswerb0488d;AccountKey=pM59bz97AqOMVpC28/51Z/RMPrxUmmv7OEu8ZTHKTXChGV8bdoGLSIGn0XmCj43cK2L65BPpi3XH+AStF90Gzg==;EndpointSuffix=core.windows.net"
+            connection_string = BLOB_CONNECTION_STRING_PRIMARY
         else: 
-            connection_string = "DefaultEndpointsProtocol=https;AccountName=m9aitasks;AccountKey=eVv1B099DUs+1MGENRqIns6AsNUVtmvFgjJ1e3Vw2hAdCjtOHwVjujtY7mTc81C+KDFPAzU8CTBs+AStwxBIKg==;EndpointSuffix=core.windows.net"
+            connection_string = BLOB_CONNECTION_STRING_SECONDARY
 
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         filename = str(task) + "/" + str(task) + "-messages.json"
@@ -97,7 +95,7 @@ Email conversation:
         }
 
         # Get client info from GPT
-        response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload)
+        response = requests.post(OPENAI_ENDPOINT, headers=headers, json=payload)
         response_json = response.json()
 
         # Format the final response
