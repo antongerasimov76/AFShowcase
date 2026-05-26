@@ -295,7 +295,6 @@ Do not add any signature, name, or contact details at the end of your reply.
     try:
         response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload, timeout=openai_timeout)
         response.raise_for_status()
-        response_json = response.json()
     except requests.exceptions.Timeout:
         logging.error("OpenAI API request timed out.")
         return func.HttpResponse(
@@ -321,6 +320,10 @@ Do not add any signature, name, or contact details at the end of your reply.
         )
 
     try:
+        # Parse and extract the content from the response;
+        # json.JSONDecodeError (ValueError subclass) is caught here alongside
+        # KeyError/IndexError so a non-JSON body returns a structured 502.
+        response_json = response.json()
         # Extract the content from the response
         answer_content = response_json['choices'][0]['message']['content']
 
@@ -329,7 +332,7 @@ Do not add any signature, name, or contact details at the end of your reply.
         completion_tokens = response_json['usage']['completion_tokens']
         total_tokens = response_json['usage']['total_tokens']
         model_name = response_json.get('model', 'unknown')
-    except (KeyError, IndexError) as e:
+    except (KeyError, IndexError, ValueError) as e:
         logging.error(f"Unexpected OpenAI response format: {e}")
         return func.HttpResponse(
             json.dumps({"error": "Unexpected response from OpenAI service"}),
