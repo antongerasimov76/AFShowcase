@@ -24,9 +24,10 @@ name: "Pre-Merge Review Pipeline"
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 concurrency:
-  group: pre-merge-review-${{ github.event.pull_request.number }}
+  group: pre-merge-review-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
