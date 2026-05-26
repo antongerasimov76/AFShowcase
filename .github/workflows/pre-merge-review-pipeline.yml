@@ -50,5 +50,5 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
           WAIT_FOR_STAGE1: ${{ github.event_name == 'pull_request_target' && 'true' || 'false' }}
-          PRE_MERGE_REVIEW_MODEL: ${{ vars.PRE_MERGE_REVIEW_MODEL || 'openai/gpt-4.1' }}
+          PRE_MERGE_REVIEW_MODEL: ${{ vars.PRE_MERGE_REVIEW_MODEL || 'openai/gpt-5' }}
         run: node .github/scripts/pre-merge-review.mjs

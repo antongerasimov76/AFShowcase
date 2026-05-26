@@ -3,7 +3,14 @@ import { readFile } from 'node:fs/promises';
 const token = requiredEnv('GITHUB_TOKEN');
 const repository = requiredEnv('GITHUB_REPOSITORY');
 const prNumber = Number(requiredEnv('PR_NUMBER'));
-const model = process.env.PRE_MERGE_REVIEW_MODEL || 'openai/gpt-4.1';
+const configuredModel = process.env.PRE_MERGE_REVIEW_MODEL || 'openai/gpt-5';
+const modelFallbacks = uniqueModels([
+  ...configuredModel.split(',').map(value => value.trim()).filter(Boolean),
+  'openai/gpt-5-mini',
+  'openai/gpt-5-chat',
+  'openai/gpt-4.1'
+]);
+let selectedModel = modelFallbacks[0];
 const waitForStage1 = process.env.WAIT_FOR_STAGE1 === 'true';
 
 const [owner, repo] = repository.split('/');
@@ -250,34 +257,49 @@ function createPrompt({ pr, files, issueComments, reviews, checkRuns, copilotIns
 }
 
 async function callGitHubModels(messages) {
-  const response = await fetch('https://models.github.ai/inference/chat/completions', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: 0.1,
-      max_tokens: 6000
-    })
-  });
+  let lastError;
 
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  for (const candidateModel of modelFallbacks) {
+    selectedModel = candidateModel;
+    console.log(`Trying GitHub Models candidate: ${candidateModel}`);
 
-  if (!response.ok) {
-    const message = data?.error?.message || data?.message || response.statusText;
-    throw new Error(`GitHub Models ${response.status}: ${message}`);
+    try {
+      const response = await fetch('https://models.github.ai/inference/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: candidateModel,
+          messages,
+          temperature: 0.1,
+          max_tokens: 6000
+        })
+      });
+
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        const message = data?.error?.message || data?.message || response.statusText;
+        throw new Error(`GitHub Models ${response.status}: ${message}`);
+      }
+
+      const content = data?.choices?.[0]?.message?.content;
+      if (!content) {
+        throw new Error('GitHub Models returned no message content.');
+      }
+
+      console.log(`GitHub Models selected: ${candidateModel}`);
+      return content;
+    } catch (error) {
+      lastError = error;
+      console.warn(`GitHub Models candidate failed (${candidateModel}): ${error.message}`);
+    }
   }
 
-  const content = data?.choices?.[0]?.message?.content;
-  if (!content) {
-    throw new Error('GitHub Models returned no message content.');
-  }
-
-  return content;
+  throw new Error(`All GitHub Models candidates failed. Last error: ${lastError?.message || 'unknown'}`);
 }
 
 function normalizeReview(review, context) {
@@ -300,7 +322,7 @@ function ensureModelStamp(output) {
   }
 
   const contextLine = `> Execution Context: GITHUB ACTIONS | Review Mode: CODE`;
-  return output.replace(contextLine, `${contextLine} | Model: ${model}`);
+  return output.replace(contextLine, `${contextLine} | Model: ${selectedModel}`);
 }
 
 function ensureRequiredSections(output, context) {
@@ -434,10 +456,14 @@ function fallbackReview({ pr, files, reviews, checkRuns }, error) {
 function header({ pr }, risk) {
   return [
     `## Pre-Merge Review - Risk: ${risk}/10`,
-    `> Execution Context: GITHUB ACTIONS | Review Mode: CODE | Model: ${model}`,
+    `> Execution Context: GITHUB ACTIONS | Review Mode: CODE | Model: ${selectedModel}`,
     '',
     `Repository: \`${repository}\`  Branch: \`${pr.head.ref}\` -> \`${pr.base.ref}\`  HEAD: \`${pr.head.sha.slice(0, 7)}\``
   ].join('\n');
+}
+
+function uniqueModels(models) {
+  return [...new Set(models)];
 }
 
 function selectFiles(files) {
