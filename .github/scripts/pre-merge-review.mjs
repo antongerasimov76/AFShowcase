@@ -9,6 +9,21 @@ const waitForStage1 = process.env.WAIT_FOR_STAGE1 === 'true';
 const [owner, repo] = repository.split('/');
 const apiBase = 'https://api.github.com';
 const markerPrefix = `<!-- pre-merge-review-action pr:${prNumber}`;
+const requiredSections = [
+  '## Summary',
+  '## Diff Coverage',
+  '## CI Status Analysis',
+  '## Changes Made',
+  '### Per-file Review',
+  '### Type of Change',
+  '## Risks & Security',
+  '### Testing',
+  '## Code Quality',
+  '## Documentation',
+  '## Checklist',
+  '## Merge Risk Score',
+  '## Merge Readiness'
+];
 
 if (!owner || !repo || Number.isNaN(prNumber)) {
   throw new Error(`Invalid repository or PR number: repository=${repository}, prNumber=${process.env.PR_NUMBER}`);
@@ -195,6 +210,8 @@ function createPrompt({ pr, files, issueComments, reviews, checkRuns, copilotIns
         '## Merge Readiness',
         '',
         'Rules:',
+        '- Every heading listed above is mandatory. Do not omit sections for documentation-only PRs.',
+        '- If a section has no findings, write "None" or "N/A" with a short reason.',
         '- Findings must be observations, not claims that you implemented fixes.',
         '- Do not say "completed", "fixed", "now fixed", or mention a commit you made.',
         '- Merge Readiness must be one of: Block, Needs follow-up items, LGTM.',
@@ -272,7 +289,54 @@ function normalizeReview(review, context) {
     output = `${header(context, 5)}\n\n${output}`;
   }
 
-  return output;
+  output = ensureModelStamp(output);
+
+  return ensureRequiredSections(output, context);
+}
+
+function ensureModelStamp(output) {
+  if (output.includes('Model:')) {
+    return output;
+  }
+
+  const contextLine = `> Execution Context: GITHUB ACTIONS | Review Mode: CODE`;
+  return output.replace(contextLine, `${contextLine} | Model: ${model}`);
+}
+
+function ensureRequiredSections(output, context) {
+  const missingSections = requiredSections.filter(section => !output.includes(section));
+  if (!missingSections.length) {
+    return output;
+  }
+
+  const additions = missingSections.flatMap(section => missingSectionBody(section, context));
+  return [
+    output.trim(),
+    '',
+    '---',
+    '',
+    '## Format Guardrail Notes',
+    `The model response omitted ${missingSections.length} required section(s). The action added the sections below to preserve the strict review template.`,
+    '',
+    ...additions
+  ].join('\n');
+}
+
+function missingSectionBody(section, { files, checkRuns }) {
+  switch (section) {
+    case '## CI Status Analysis':
+      return [section, checkSummary(checkRuns), ''];
+    case '## Diff Coverage':
+      return [section, `- Files changed: ${files.length}. MISSING - model omitted explicit diff coverage; changed files were still provided to the reviewer.`, ''];
+    case '### Per-file Review':
+      return [section, ...selectFiles(files).map(file => `- **path:** \`${file.filename}\` - MISSING - model omitted per-file analysis.`), ''];
+    case '## Merge Risk Score':
+      return [section, '**Risk Score: MISSING - model omitted explicit score section.**', '', '**Risk drivers**:', '- MISSING - model omitted explicit risk drivers.', '', '**Risk mitigations**:', '- MISSING - model omitted explicit mitigations.', ''];
+    case '## Merge Readiness':
+      return [section, 'Needs follow-up items. MISSING - model omitted explicit merge readiness section.', ''];
+    default:
+      return [section, 'MISSING - model omitted this required section.', ''];
+  }
 }
 
 function fallbackReview({ pr, files, reviews, checkRuns }, error) {
@@ -370,7 +434,7 @@ function fallbackReview({ pr, files, reviews, checkRuns }, error) {
 function header({ pr }, risk) {
   return [
     `## Pre-Merge Review - Risk: ${risk}/10`,
-    `> Execution Context: GITHUB ACTIONS | Review Mode: CODE`,
+    `> Execution Context: GITHUB ACTIONS | Review Mode: CODE | Model: ${model}`,
     '',
     `Repository: \`${repository}\`  Branch: \`${pr.head.ref}\` -> \`${pr.base.ref}\`  HEAD: \`${pr.head.sha.slice(0, 7)}\``
   ].join('\n');
