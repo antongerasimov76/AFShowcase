@@ -1,5 +1,6 @@
 from datetime import datetime
 import logging
+import os
 import requests
 import azure.functions as func
 import json
@@ -7,27 +8,51 @@ import json
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     start_time = datetime.now()
-    logging.info('Python HTTP trigger function processed a request.')
+    logging.info('GetFirstAnswer function invoked.')
 
     try:
-        # Read the request body
         req_body = req.get_json()
     except ValueError:
+        logging.warning('Request received with invalid JSON body.')
         return func.HttpResponse(
-            "Invalid request body",
-            status_code=400
+            json.dumps({"error": "Invalid JSON in request body"}),
+            status_code=400,
+            mimetype="application/json"
         )
-    
+
+    # Validate required fields
     email = req_body.get('Email')
     email_title = req_body.get('Email Subject')
     email_text = req_body.get('Email Body')
 
+    missing_fields = []
+    if not email:
+        missing_fields.append('Email')
+    if not email_title:
+        missing_fields.append('Email Subject')
+    if not email_text:
+        missing_fields.append('Email Body')
+
+    if missing_fields:
+        logging.warning(f'Missing required fields: {missing_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Missing required fields: {', '.join(missing_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
     if email:
-        #GPT4V_KEY = "05287303f01b406582788526baca76c3"
-        GPT4V_KEY = "1CgfeI6A9QsByYMPMEwFWChmEDGoIiIVPWYquWH0LjbGPkJbwppJJQQJ99BCACHYHv6XJ3w3AAABACOGJFxT"
-        #GPT4V_ENDPOINT = "https://m9ai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"
-        #GPT4V_ENDPOINT = "https://m9ai.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview"
-        GPT4V_ENDPOINT = "https://paphos-eus2.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview"
+        GPT4V_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
+        GPT4V_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
+
+        if not GPT4V_KEY or not GPT4V_ENDPOINT:
+            logging.error("AZURE_OPENAI_API_KEY or AZURE_OPENAI_ENDPOINT not configured.")
+            return func.HttpResponse(
+                json.dumps({"error": "OpenAI service not configured"}),
+                status_code=503,
+                mimetype="application/json"
+            )
+
         headers = {
             "Content-Type": "application/json",
             "api-key": GPT4V_KEY,
@@ -242,7 +267,9 @@ Do not add any signature, name, or contact details at the end of your reply.
         return func.HttpResponse(json.dumps(final_response), mimetype="application/json")
 
     else:
+        logging.error('Email field was empty despite passing validation.')
         return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
+            json.dumps({"error": "Internal error: email field empty after validation"}),
+            status_code=500,
+            mimetype="application/json"
         )
