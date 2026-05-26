@@ -99,10 +99,17 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         connection_string = get_blob_connection_string(account_name)
     except ValueError as exc:
-        logging.warning("GetCargoJson: invalid storage account configuration: %s", exc)
+        logging.warning("GetCargoJson: unknown storage account: %s", exc)
         return func.HttpResponse(
-            json.dumps({"error": "Invalid storage account configuration"}),
+            json.dumps({"error": "Unknown storage account"}),
             status_code=400,
+            mimetype="application/json"
+        )
+    except RuntimeError as exc:
+        logging.error("GetCargoJson: blob storage misconfiguration: %s", exc)
+        return func.HttpResponse(
+            json.dumps({"error": "Storage account not configured"}),
+            status_code=500,
             mimetype="application/json"
         )
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -115,9 +122,18 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     # Call Azure OpenAI
     payload = build_payload(chat_history_text)
+    try:
+        headers = get_openai_headers()
+    except RuntimeError as exc:
+        logging.error("GetCargoJson: OpenAI misconfiguration: %s", exc)
+        return func.HttpResponse(
+            json.dumps({"error": "OpenAI not configured"}),
+            status_code=500,
+            mimetype="application/json"
+        )
     response = requests.post(
         OPENAI_ENDPOINT,
-        headers=get_openai_headers(),
+        headers=headers,
         json=payload,
         timeout=60
     )
