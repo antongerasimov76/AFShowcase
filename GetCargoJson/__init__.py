@@ -99,8 +99,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     try:
         connection_string = get_blob_connection_string(account_name)
     except ValueError as exc:
+        logging.warning("GetCargoJson: invalid storage account configuration: %s", exc)
         return func.HttpResponse(
-            json.dumps({"error": str(exc)}),
+            json.dumps({"error": "Invalid storage account configuration"}),
             status_code=400,
             mimetype="application/json"
         )
