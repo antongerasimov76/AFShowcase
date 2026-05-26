@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mcp-atlassian": {
+      "type": "http",
+      "url": "https://mcp-atlassian-dev.bluefield-485a7489.westeurope.azurecontainerapps.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${{ secrets.ATLASSIAN_MCP_TOKEN }}"
+      }
+    }
+  }
+}
