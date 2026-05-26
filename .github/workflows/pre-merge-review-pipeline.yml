@@ -1,213 +1,54 @@
-# Pre-Merge Review Pipeline
-# Two-stage code review pipeline:
-#   Stage 1: copilot-pull-request-reviewer (auto, shallow review using .github/copilot-instructions.md)
-#   Stage 2: Custom agent /pre-merge-review (deep review with risk score)
-#
-# Flow:
-#   PR opened → this workflow polls for copilot-pull-request-reviewer review
-#   → once found, posts structured context with Stage 1 results + call-to-action
-#   → Human/reviewer writes @copilot /pre-merge-review → Stage 2 agent performs deep review
-#   → Both Stage 1 and Stage 2 reviews visible in PR for final decision
-#
-# Why human-in-the-loop?
-#   - Copilot Coding Agent ignores @mentions from bots (github-actions[bot])
-#   - Adds valuable human checkpoint before deep AI analysis
-#   - No external services needed, pure GitHub Copilot
-#
-# Custom Agent: .github/agents/pre-merge-review.agent.md
-#   - Verifies security (no hardcoded secrets, proper error handling)
-#   - Checks code quality (DRY, PEP 8, Azure Functions best practices)
-#   - Provides merge risk score (1-10) and structured review
-
-name: "Pre-Merge Review Pipeline"
+name: "Pre-Merge Review"
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Pull request number to review"
+        required: true
+        type: number
 
 concurrency:
-  group: pre-merge-review-${{ github.event.pull_request.number }}
+  group: pre-merge-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+  checks: read
+  models: read
+
 jobs:
-  trigger-deep-review:
-    name: Wait for Stage 1 & Trigger Deep Review
-    # Skip pre-merge review for Copilot's draft PRs (copilot/* branches) and draft PRs
+  pre-merge-review:
+    name: Read-only PR Review
     if: >-
-      !startsWith(github.event.pull_request.head.ref, 'copilot/') &&
-      github.event.pull_request.draft == false
+      (github.event_name == 'pull_request_target' &&
+        github.event.pull_request.draft == false &&
+        !startsWith(github.event.pull_request.head.ref, 'copilot/')) ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/pre-merge-review')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
+    timeout-minutes: 15
+
     steps:
-      - name: Wait for copilot-pull-request-reviewer
-        id: wait
-        uses: actions/github-script@v7
+      - name: Checkout trusted workflow code
+        uses: actions/checkout@v4
         with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-            const maxAttempts = 20;       // 20 × 30s = 10 min max wait
-            const pollInterval = 30000;   // 30 seconds
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
 
-            core.info(`Waiting for copilot-pull-request-reviewer on PR #${prNumber}...`);
-
-            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-              const reviews = await github.rest.pulls.listReviews({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: prNumber
-              });
-
-              const botReview = reviews.data.find(
-                r => r.user.login === 'copilot-pull-request-reviewer[bot]'
-              );
-
-              if (botReview) {
-                core.info(`Stage 1 review found (attempt ${attempt})`);
-                core.setOutput('found', 'true');
-                core.setOutput('review_body', botReview.body || '');
-                return;
-              }
-
-              core.info(`Attempt ${attempt}/${maxAttempts} — no review yet, waiting ${pollInterval/1000}s...`);
-              await new Promise(resolve => setTimeout(resolve, pollInterval));
-            }
-
-            core.warning('Stage 1 review not found after max wait time');
-            core.setOutput('found', 'false');
-
-      - name: Collapse Stage 1 review into details tag
-        if: steps.wait.outputs.found == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-
-            const reviews = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-
-            const botReview = reviews.data
-              .filter(r => r.user.login === 'copilot-pull-request-reviewer[bot]')
-              .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at))[0];
-
-            if (!botReview) {
-              core.info('No review found. Skipping.');
-              return;
-            }
-
-            // 1. Wrap review body in <details> (if not already wrapped)
-            if (botReview.body && !botReview.body.startsWith('<details>')) {
-              const wrappedBody = `<details><summary>🔍 Stage 1 Review — copilot-pull-request-reviewer (click to expand)</summary>\n\n${botReview.body}\n\n</details>`;
-              await github.graphql(`
-                mutation UpdateReview($id: ID!, $body: String!) {
-                  updatePullRequestReview(input: { pullRequestReviewId: $id, body: $body }) {
-                    pullRequestReview { id }
-                  }
-                }
-              `, { id: botReview.node_id, body: wrappedBody });
-              core.info(`Review body wrapped (${botReview.node_id})`);
-            }
-
-            // 2. Minimize all inline review comments (PullRequestReviewComment — these ARE Minimizable)
-            const inlineComments = await github.rest.pulls.listReviewComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-              per_page: 100
-            });
-
-            const botInlineComments = inlineComments.data.filter(
-              c => c.user.login === 'copilot-pull-request-reviewer[bot]'
-            );
-
-            core.info(`Found ${botInlineComments.length} inline comments to minimize`);
-
-            for (const comment of botInlineComments) {
-              try {
-                await github.graphql(`
-                  mutation MinimizeComment($id: ID!) {
-                    minimizeComment(input: { subjectId: $id, classifier: RESOLVED }) {
-                      minimizedComment { isMinimized }
-                    }
-                  }
-                `, { id: comment.node_id });
-                core.info(`Minimized inline comment ${comment.node_id}`);
-              } catch (e) {
-                core.warning(`Failed to minimize ${comment.node_id}: ${e.message}`);
-              }
-            }
-
-            core.info('Stage 1 review collapsed successfully.');
-
-      - name: Check if deep review already requested
-        if: steps.wait.outputs.found == 'true'
-        id: check
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber
-            });
-
-            // Avoid duplicate context posts
-            const alreadyRequested = comments.data.some(c =>
-              c.body.includes('Merge Risk Analysis available') &&
-              c.user.login === 'github-actions[bot]'
-            );
-
-            core.setOutput('skip', alreadyRequested ? 'true' : 'false');
-
-      - name: Post merge risk analysis invitation
-        if: steps.wait.outputs.found == 'true' && steps.check.outputs.skip != 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = context.payload.pull_request.number;
-
-            // Re-fetch Stage 1 review (safer than passing through outputs)
-            const reviews = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber
-            });
-
-            const botReview = reviews.data
-              .filter(r => r.user.login === 'copilot-pull-request-reviewer[bot]')
-              .sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at))[0];
-
-            const shallowSummary = botReview
-              ? `\n\n_Stage 1 review by \`copilot-pull-request-reviewer[bot]\` is visible above in the PR reviews section (collapsed)._`
-              : '\n\n_No Stage 1 review body found._';
-
-            const body = [
-              '## 🔍 Merge Risk Analysis available',
-              '',
-              'Automated shallow review is done (see collapsed review above).',
-              '',
-              'To get a deeper **merge risk analysis** — security flags, code quality, architecture concerns — paste this:',
-              '',
-              '> @copilot /pre-merge-review',
-              '',
-              '> ⚠️ **The merge decision and responsibility remain with the reviewer.** The assistant highlights risks and open points — it does not approve or block.',
-              '',
-              '---',
-              '',
-              shallowSummary
-            ].join('\n');
-
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              body: body
-            });
-
-            core.info(`Merge risk analysis invitation posted for PR #${prNumber}`);
+      - name: Run pre-merge review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+          WAIT_FOR_STAGE1: ${{ github.event_name == 'pull_request_target' && 'true' || 'false' }}
+          PRE_MERGE_REVIEW_MODEL: ${{ vars.PRE_MERGE_REVIEW_MODEL || 'openai/gpt-4.1' }}
+        run: node .github/scripts/pre-merge-review.mjs
