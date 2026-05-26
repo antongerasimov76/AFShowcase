@@ -38,7 +38,7 @@ The pre-merge-review agent is READ-ONLY. Its findings are observations for human
 - **Error Handling**: Proper try/except with meaningful error messages and appropriate HTTP status codes
 - **Type Hints**: Use Python type hints for function parameters and return values
 - **Logging**: Use `logging` module with appropriate levels (info, warning, error)
-- **Constants**: No magic strings or numbers — use named constants or configuration
+- **Constants**: No magic strings or numbers â€” use named constants or configuration
 
 ### 3. Azure Functions Best Practices
 - **HTTP Triggers**: Validate request method and content type
