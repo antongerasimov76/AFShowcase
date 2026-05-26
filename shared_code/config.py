@@ -4,14 +4,18 @@ import os
 
 
 def get_required_env(name: str) -> str:
-    """Return env var value or raise if missing."""
+    """Return env var value or raise ValueError if missing."""
     value = os.environ.get(name)
     if not value:
-        raise EnvironmentError(f"Required environment variable '{name}' is not set")
+        raise ValueError(f"Required environment variable '{name}' is not set")
     return value
 
 
-OPENAI_API_KEY = get_required_env("OPENAI_API_KEY")
-OPENAI_ENDPOINT = get_required_env("OPENAI_ENDPOINT")
-BLOB_CONNECTION_STRING_PRIMARY = os.environ.get("BLOB_CONNECTION_STRING_PRIMARY", "")
-BLOB_CONNECTION_STRING_SECONDARY = os.environ.get("BLOB_CONNECTION_STRING_SECONDARY", "")
+def get_openai_api_key() -> str:
+    """Lazily resolve the OpenAI API key from environment."""
+    return get_required_env("OPENAI_API_KEY")
+
+
+def get_openai_endpoint() -> str:
+    """Lazily resolve the OpenAI endpoint from environment."""
+    return get_required_env("OPENAI_ENDPOINT")
