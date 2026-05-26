@@ -5,6 +5,10 @@ import requests
 import azure.functions as func
 import json
 
+MAX_EMAIL_LEN = 500
+MAX_TITLE_LEN = 500
+MAX_BODY_LEN = 10000
+
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     start_time = datetime.now()
@@ -33,18 +37,55 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
     email_title = req_body.get('Email Subject')
     email_text = req_body.get('Email Body')
 
-    missing_fields = []
-    if not email:
-        missing_fields.append('Email')
-    if not email_title:
-        missing_fields.append('Email Subject')
-    if not email_text:
-        missing_fields.append('Email Body')
+    input_fields = [('Email', email), ('Email Subject', email_title), ('Email Body', email_text)]
 
+    # Check for missing (None) fields first, before type validation
+    missing_fields = [name for name, val in input_fields if val is None]
     if missing_fields:
         logging.warning(f'Missing required fields: {missing_fields}')
         return func.HttpResponse(
             json.dumps({"error": f"Missing required fields: {', '.join(missing_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Validate field types — all values must be strings
+    invalid_fields = [name for name, val in input_fields if not isinstance(val, str)]
+    if invalid_fields:
+        logging.warning(f'Non-string fields received: {invalid_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Fields must be strings: {', '.join(invalid_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Strip whitespace; re-check for empty (catches whitespace-only values)
+    email = email.strip()
+    email_title = email_title.strip()
+    email_text = email_text.strip()
+    input_fields = [('Email', email), ('Email Subject', email_title), ('Email Body', email_text)]
+
+    empty_fields = [name for name, val in input_fields if not val]
+    if empty_fields:
+        logging.warning(f'Blank required fields after stripping: {empty_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Missing required fields: {', '.join(empty_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Enforce maximum lengths to guard against token abuse and oversized prompts
+    field_limits = [MAX_EMAIL_LEN, MAX_TITLE_LEN, MAX_BODY_LEN]
+    over_limit = [
+        (name, len(val), limit)
+        for (name, val), limit in zip(input_fields, field_limits)
+        if len(val) > limit
+    ]
+    if over_limit:
+        detail = ', '.join(f'{name}={actual}/{limit}' for name, actual, limit in over_limit)
+        logging.warning(f'Field length validation failed: {detail}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Fields exceed maximum allowed length: {detail}"}),
             status_code=400,
             mimetype="application/json"
         )
