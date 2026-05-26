@@ -82,9 +82,28 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400,
             mimetype="application/json"
         )
+    if not container_name:
+        return func.HttpResponse(
+            json.dumps({"error": "ABS Container is required"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+    if not account_name:
+        return func.HttpResponse(
+            json.dumps({"error": "ABS Account Name is required"}),
+            status_code=400,
+            mimetype="application/json"
+        )
 
     # Get blob connection and download chat history
-    connection_string = get_blob_connection_string(account_name)
+    try:
+        connection_string = get_blob_connection_string(account_name)
+    except ValueError as exc:
+        return func.HttpResponse(
+            json.dumps({"error": str(exc)}),
+            status_code=400,
+            mimetype="application/json"
+        )
     blob_service_client = BlobServiceClient.from_connection_string(connection_string)
     filename = f"{task}/{task}-messages.json"
 
