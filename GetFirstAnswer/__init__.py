@@ -8,6 +8,7 @@ import json
 MAX_EMAIL_LEN = 500
 MAX_TITLE_LEN = 500
 MAX_BODY_LEN = 10000
+DEFAULT_OPENAI_TIMEOUT = 60
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -287,10 +288,13 @@ Do not add any signature, name, or contact details at the end of your reply.
     }
 
     try:
-        openai_timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+        openai_timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", str(DEFAULT_OPENAI_TIMEOUT)))
+        if openai_timeout <= 0:
+            logging.warning("OPENAI_TIMEOUT_SECONDS must be a positive integer; defaulting to %d.", DEFAULT_OPENAI_TIMEOUT)
+            openai_timeout = DEFAULT_OPENAI_TIMEOUT
     except ValueError:
-        logging.warning("OPENAI_TIMEOUT_SECONDS is not a valid integer; defaulting to 60.")
-        openai_timeout = 60
+        logging.warning("OPENAI_TIMEOUT_SECONDS is not a valid integer; defaulting to %d.", DEFAULT_OPENAI_TIMEOUT)
+        openai_timeout = DEFAULT_OPENAI_TIMEOUT
 
     try:
         response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload, timeout=openai_timeout)
