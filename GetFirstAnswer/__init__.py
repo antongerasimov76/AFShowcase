@@ -245,7 +245,11 @@ Do not add any signature, name, or contact details at the end of your reply.
         "max_tokens": 2400
     }
 
-    openai_timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+    try:
+        openai_timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
+    except ValueError:
+        logging.warning("OPENAI_TIMEOUT_SECONDS is not a valid integer; defaulting to 60.")
+        openai_timeout = 60
 
     try:
         response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload, timeout=openai_timeout)
@@ -259,10 +263,11 @@ Do not add any signature, name, or contact details at the end of your reply.
             mimetype="application/json"
         )
     except requests.exceptions.HTTPError as e:
-        logging.error(f"OpenAI API returned HTTP error {e.response.status_code}: {e}")
-        status = 429 if e.response.status_code == 429 else 503
+        response_status = getattr(e.response, 'status_code', None)
+        logging.error(f"OpenAI API returned HTTP error {response_status}: {e}")
+        status = 429 if response_status == 429 else 503
         return func.HttpResponse(
-            json.dumps({"error": f"OpenAI service error: HTTP {e.response.status_code}"}),
+            json.dumps({"error": f"OpenAI service error: HTTP {response_status}"}),
             status_code=status,
             mimetype="application/json"
         )
