@@ -1,38 +1,112 @@
 from datetime import datetime
 import logging
+import os
 import requests
 import azure.functions as func
 import json
 
+MAX_EMAIL_LEN = 500
+MAX_TITLE_LEN = 500
+MAX_BODY_LEN = 10000
+DEFAULT_OPENAI_TIMEOUT = 60
+
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     start_time = datetime.now()
-    logging.info('Python HTTP trigger function processed a request.')
+    logging.info('GetFirstAnswer function invoked.')
 
     try:
-        # Read the request body
         req_body = req.get_json()
     except ValueError:
+        logging.warning('Request received with invalid JSON body.')
         return func.HttpResponse(
-            "Invalid request body",
-            status_code=400
+            json.dumps({"error": "Invalid JSON in request body"}),
+            status_code=400,
+            mimetype="application/json"
         )
-    
+
+    if not isinstance(req_body, dict):
+        logging.warning('Request body is not a JSON object.')
+        return func.HttpResponse(
+            json.dumps({"error": "Request body must be a JSON object"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Validate required fields
     email = req_body.get('Email')
     email_title = req_body.get('Email Subject')
     email_text = req_body.get('Email Body')
 
-    if email:
-        #GPT4V_KEY = "05287303f01b406582788526baca76c3"
-        GPT4V_KEY = "1CgfeI6A9QsByYMPMEwFWChmEDGoIiIVPWYquWH0LjbGPkJbwppJJQQJ99BCACHYHv6XJ3w3AAABACOGJFxT"
-        #GPT4V_ENDPOINT = "https://m9ai.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2024-08-01-preview"
-        #GPT4V_ENDPOINT = "https://m9ai.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-15-preview"
-        GPT4V_ENDPOINT = "https://paphos-eus2.openai.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview"
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": GPT4V_KEY,
-        }
-        payload = {
+    input_fields = [('Email', email), ('Email Subject', email_title), ('Email Body', email_text)]
+
+    # Check for missing (None) fields first, before type validation
+    missing_fields = [name for name, val in input_fields if val is None]
+    if missing_fields:
+        logging.warning(f'Missing required fields: {missing_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Missing required fields: {', '.join(missing_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Validate field types — all values must be strings
+    invalid_fields = [name for name, val in input_fields if not isinstance(val, str)]
+    if invalid_fields:
+        logging.warning(f'Non-string fields received: {invalid_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Fields must be strings: {', '.join(invalid_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Strip whitespace; re-check for empty (catches whitespace-only values)
+    email = email.strip()
+    email_title = email_title.strip()
+    email_text = email_text.strip()
+    input_fields = [('Email', email), ('Email Subject', email_title), ('Email Body', email_text)]
+
+    empty_fields = [name for name, val in input_fields if not val]
+    if empty_fields:
+        logging.warning(f'Blank required fields after stripping: {empty_fields}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Missing required fields: {', '.join(empty_fields)}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    # Enforce maximum lengths to guard against token abuse and oversized prompts
+    field_limits = [MAX_EMAIL_LEN, MAX_TITLE_LEN, MAX_BODY_LEN]
+    over_limit = [
+        (name, len(val), limit)
+        for (name, val), limit in zip(input_fields, field_limits)
+        if len(val) > limit
+    ]
+    if over_limit:
+        detail = ', '.join(f'{name}={actual}/{limit}' for name, actual, limit in over_limit)
+        logging.warning(f'Field length validation failed: {detail}')
+        return func.HttpResponse(
+            json.dumps({"error": f"Fields exceed maximum allowed length: {detail}"}),
+            status_code=400,
+            mimetype="application/json"
+        )
+
+    GPT4V_KEY = os.environ.get("AZURE_OPENAI_API_KEY")
+    GPT4V_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT")
+
+    if not GPT4V_KEY or not GPT4V_ENDPOINT:
+        logging.error("AZURE_OPENAI_API_KEY or AZURE_OPENAI_ENDPOINT not configured.")
+        return func.HttpResponse(
+            json.dumps({"error": "OpenAI service not configured"}),
+            status_code=503,
+            mimetype="application/json"
+        )
+
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": GPT4V_KEY,
+    }
+    payload = {
         "messages": [
             {
             "role": "system",
@@ -211,11 +285,49 @@ Do not add any signature, name, or contact details at the end of your reply.
         "temperature": 1,
         "top_p": 0.95,
         "max_tokens": 2400
-        }
+    }
 
-        response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload)
+    try:
+        openai_timeout = int(os.environ.get("OPENAI_TIMEOUT_SECONDS", str(DEFAULT_OPENAI_TIMEOUT)))
+        if openai_timeout <= 0:
+            logging.warning("OPENAI_TIMEOUT_SECONDS must be a positive integer; defaulting to %d.", DEFAULT_OPENAI_TIMEOUT)
+            openai_timeout = DEFAULT_OPENAI_TIMEOUT
+    except ValueError:
+        logging.warning("OPENAI_TIMEOUT_SECONDS is not a valid integer; defaulting to %d.", DEFAULT_OPENAI_TIMEOUT)
+        openai_timeout = DEFAULT_OPENAI_TIMEOUT
+
+    try:
+        response = requests.post(GPT4V_ENDPOINT, headers=headers, json=payload, timeout=openai_timeout)
+        response.raise_for_status()
+    except requests.exceptions.Timeout:
+        logging.error("OpenAI API request timed out.")
+        return func.HttpResponse(
+            json.dumps({"error": "OpenAI service timed out"}),
+            status_code=504,
+            mimetype="application/json"
+        )
+    except requests.exceptions.HTTPError as e:
+        response_status = getattr(e.response, 'status_code', None)
+        logging.error(f"OpenAI API returned HTTP error {response_status}: {e}")
+        status = 429 if response_status == 429 else 503
+        return func.HttpResponse(
+            json.dumps({"error": f"OpenAI service error: HTTP {response_status}"}),
+            status_code=status,
+            mimetype="application/json"
+        )
+    except requests.exceptions.RequestException as e:
+        logging.error(f"OpenAI API request failed: {e}")
+        return func.HttpResponse(
+            json.dumps({"error": "OpenAI service unavailable"}),
+            status_code=503,
+            mimetype="application/json"
+        )
+
+    try:
+        # Parse and extract the content from the response;
+        # json.JSONDecodeError (ValueError subclass) is caught here alongside
+        # KeyError/IndexError so a non-JSON body returns a structured 502.
         response_json = response.json()
-
         # Extract the content from the response
         answer_content = response_json['choices'][0]['message']['content']
 
@@ -223,26 +335,27 @@ Do not add any signature, name, or contact details at the end of your reply.
         prompt_tokens = response_json['usage']['prompt_tokens']
         completion_tokens = response_json['usage']['completion_tokens']
         total_tokens = response_json['usage']['total_tokens']
-        model_name = response_json.get('model', 'unknown')  # fallback на случай отсутствия
-
-        # Calculate execution time and construct final response
-        end_time = datetime.now()
-        execution_time_ms = (end_time - start_time).total_seconds() * 1000
-
-        final_response = {
-            "answer": answer_content,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
-            "model": model_name,
-            "execution_time": round(execution_time_ms)
-        }
-
-        # Return the final response as JSON
-        return func.HttpResponse(json.dumps(final_response), mimetype="application/json")
-
-    else:
+        model_name = response_json.get('model', 'unknown')
+    except (KeyError, IndexError, ValueError) as e:
+        logging.error(f"Unexpected OpenAI response format: {e}")
         return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
+            json.dumps({"error": "Unexpected response from OpenAI service"}),
+            status_code=502,
+            mimetype="application/json"
         )
+
+    # Calculate execution time and construct final response
+    end_time = datetime.now()
+    execution_time_ms = (end_time - start_time).total_seconds() * 1000
+
+    final_response = {
+        "answer": answer_content,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "model": model_name,
+        "execution_time": round(execution_time_ms)
+    }
+
+    # Return the final response as JSON
+    return func.HttpResponse(json.dumps(final_response), mimetype="application/json")
